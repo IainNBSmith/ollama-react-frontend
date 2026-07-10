@@ -1,5 +1,6 @@
 import http from 'http';
 import ollama from 'ollama';
+// backend runs code and processes things into a format which the frontend can use.
 
 // this backend will do processing on responses and should also have
 // the option to call the ollama API directly if needed. It will also be able to store messages in memory for now, but can be extended to use a database later.
@@ -23,7 +24,10 @@ const server = http.createServer(async (req, res) => {
 
   if (req.url === '/api/message' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ message: 'Hello from the backend!' }))
+    res.end(JSON.stringify({ message: [{'type': 'issue', 'text': 'Hello from the backend!', 'hoverContent': 'This is a hover message!'}, 
+                                       {'type': 'normal', 'text': 'Another message!'},
+                                       {'type': 'issue', 'text': 'Hello from the backend again!', 'hoverContent': 'This is a different hover message!' } ] }))
+    //res.end(JSON.stringify({ message: HoverableText({ text: 'Hello from the backend!', hoverContent: 'This is a hover message!' }) }));
     return
   }
 
@@ -39,6 +43,8 @@ const server = http.createServer(async (req, res) => {
       messages.push(parsed)
 
       const data = await getOllamaResponse(parsed.text)
+
+      // run the ollama secondary response formatter then issue detector this will be returned as a list of all formatted strings
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ received: data.message.content }))
