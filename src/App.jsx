@@ -32,8 +32,9 @@ const HoverableText = ({ text, hoverContent, hoverId, activeHoverId, onHoverChan
       style={{
         position: 'relative',
         cursor: 'pointer',
+        textAlign: 'left',
         color: isActive ? 'black' : 'white',
-        display: 'inline-block',
+        display: 'inline',
         padding: '0 2px',
         borderRadius: '3px',
         backgroundColor: isActive ? highlightColor : hoveringHighlightColor,
@@ -44,7 +45,7 @@ const HoverableText = ({ text, hoverContent, hoverId, activeHoverId, onHoverChan
     >
       {text}
       {isActive && (hoverContent !== null && hoverContent !== undefined && hoverContent !== '') && (
-        <span
+        <div
           style={{
             position: 'absolute',
             bottom: '100%',
@@ -55,11 +56,14 @@ const HoverableText = ({ text, hoverContent, hoverId, activeHoverId, onHoverChan
             padding: '4px 8px',
             borderRadius: '4px',
             zIndex: 10,
-            whiteSpace: 'nowrap',
+            minWidth: '200px',
+            maxWidth: '1000px',
+            wordWrap: 'break-word',
+            textAlign: 'left'
           }}
         >
           {hoverContent}
-        </span>
+        </div>
       )}
     </span>
   )
@@ -85,7 +89,7 @@ const formatResponseJSONList = (responseList, activeHoverId, setActiveHoverId) =
         <HoverableText
           key={`${hoverId || `hover-${index}`}-${index}`}
           text={text}
-          hoverContent={hoverContent || 'No Fallacies Detected'}
+          hoverContent={hoverContent || ''}
           hoverId={hoverId || `hover-${index}`}
           activeHoverId={activeHoverId}
           onHoverChange={setActiveHoverId}
@@ -157,11 +161,11 @@ function App() {
     })
 
     const data = await response.json()
-    setStatus([
-      <ProcessedPrompt key="prompt" prompt={data.prompt} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />,
-      <ProcessedThinking key="thinking" thinking={data.thinking} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />,
-      <ProcessedResponse key="response" response={data.response} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />,
-    ])
+    setStatus({prompt: data.prompt, thinking: data.thinking, response: data.response})
+    //  <ProcessedPrompt key="prompt" prompt={data.prompt} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />,
+    //  <ProcessedThinking key="thinking" thinking={data.thinking} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />,
+    //  <ProcessedResponse key="response" response={data.response} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />,
+    //])
   }
 
   return (
@@ -179,7 +183,11 @@ function App() {
         <button type="submit">Send message</button>
       </form>
 
-      <div>{status}</div>
+      <div>
+        <ProcessedPrompt key="prompt" prompt={status.prompt} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />
+        <ProcessedThinking key="thinking" thinking={status.thinking} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />
+        <ProcessedResponse key="response" response={status.response} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />
+      </div>
     </div>
   )
 }

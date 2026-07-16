@@ -1,5 +1,5 @@
 .app {
-  max-width: 600px;
+  max-width: 80%;
   margin: 3rem auto;
   padding: 2rem;
   font-family: sans-serif;
@@ -15,6 +15,8 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   z-index: 10;
   min-width: 150px;
+  max-width: 200px;
+  overflow-wrap: break-word;
   margin-top: 5px;
 }
 
@@ -26,6 +28,13 @@
 
 .menu-item:hover {
   background-color: #f0f0f0;
+}
+
+.processed-prompt-card {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 10px;
 }
 
 button,

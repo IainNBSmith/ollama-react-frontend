@@ -17,9 +17,8 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
-  },
-  plugins: [react()],
-  server: {
+    plugins: [react()],
+    server: {
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
@@ -27,5 +26,6 @@ export default defineConfig([
         secure: false,
       },
     },
+  },
   },
 ])

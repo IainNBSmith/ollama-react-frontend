@@ -305,7 +305,7 @@ Here are some examples of short and long logical chains, structure your response
   }]
 `
 let STEP_2_PROMPT = `
-now look at the following list of logical fallacies, each of the logical chains can or can possibly not have these -- if you see evidence of any of the logical fallacies, add a key to the logical chain and explain which fallacy, why, and a final confidence score between 0 and 1
+now look at the following list of logical fallacies, each of the logical chains can or can possibly not have these -- if you see evidence of any of the logical fallacies, add a key to the logical chain called "logical-fallacies" and explain which fallacy it was, why under a key "why", and a final "confidence" score between 0 and 1
 these are the list of high level logical fallacies 
 { "logical_fallacies": [
  { "original name": "faulty generalization", 
@@ -580,6 +580,7 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ message: [{'type': 'issue', 'hoverId': 'ls-1', 'text': 'Hello from the backend!', 'hoverContent': 'This is a hover message!'}, 
                                        {'type': 'normal', 'text': 'Another message!'},
                                        {'type': 'issue', 'hoverId': 'ls-1', 'text': 'Hello from the backend again!', 'hoverContent': '' },
+                                       {'type': 'issue', 'hoverId': 'ls-3', 'text': 'This is a sample long message', 'hoverContent': 'This is a very very long hover message that should wrap properly within the container. Let us hope for the best!!!!!' },
                                        {'type': 'issue', 'hoverId': 'ls-2', 'text': 'Hello from the backend but different!', 'hoverContent': 'This one has a different context' } ] }))
     //res.end(JSON.stringify({ message: HoverableText({ text: 'Hello from the backend!', hoverContent: 'This is a hover message!' }) }));
     return
