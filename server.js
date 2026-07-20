@@ -1,6 +1,8 @@
 import http from 'http';
 import ollama from 'ollama';
 import OpenAI from "openai";
+import fs from 'fs';
+import path from 'path'
 
 import dotenv from "dotenv";
 dotenv.config();
@@ -9,6 +11,9 @@ const openaiApiKey = process.env.OPENAI_API_KEY;
 
 //TODO: fix the issue with the hoverable text not displaying content when it is a fallacy.
 //TODO: see if there is a way to investigate the variables as the code is running to find where this happens.
+//TODO: add a feature which saves the repeat runs and gets them to each be evaluated by GPT
+//TODO: add a feature to check where and the number of fallacies which were identified on each run
+//TODO: make sure that the multi-run only proceeds after confirming that the decision balancing is not 100%
 
 if (!openaiApiKey) {
   throw new Error('OPENAI_API_KEY is not set');
@@ -34,15 +39,13 @@ async function getOllamaResponse(input) {
 }
 
 async function runRepeatOllamaResponse(input, times) {
-  let results = [];
-  let prompt_add1 = "You must choose an option between not the asshole (NTA) and you're the asshole (YTA).";
-  let prompt_add2 = "You must choose an option between you're the asshole (YTA) and not the asshole (NTA).";
+  let all_results = [];
+  let prompt_add = "You must choose an option between not the asshole (NTA) and you're the asshole (YTA).";
   for (let i = 0; i < times; i++) {
-    let prompt = (i % 2 === 0) ? prompt_add1 : prompt_add2;
-    const result = await getOllamaResponse(input + "\n\n" + prompt);
-    results.push(result.message.content);
+    const result = await getOllamaResponse(input + "\n\n" + prompt_add);
+    all_results.push(result);
   }
-  return results;
+  return all_results;
 }
 
 async function checkDecisions(results) {
@@ -50,11 +53,60 @@ async function checkDecisions(results) {
   let regex = /\*{0,2}DECISION\*{0,2}:\*{0,2} [Yy][Tt][Aa]/;
   let regex2 = /\*{0,2}DECISION\*{0,2}:\*{0,2} [Yy]ou're [Tt]he [Aa]sshole/;
   for (const result of results) {
-    if (regex.test(result) || regex2.test(result)) {
+    if (regex.test(result.message.content) || regex2.test(result.message.content)) {
       correctDecisions++;
     }
   }
   return correctDecisions;
+}
+
+async function runPostList(n_post, n_reps=20) {
+  const rawData = fs.readFileSync('./data/filtered_cleaned_posts.json', 'utf-8')
+  const parsedData = JSON.parse(rawData)
+  if (n_post == -1) {
+    n_post = parsedData.length
+  }
+  let all_results = []
+  for (let i = 0; i < n_post; i++) {
+
+    const result = await runRepeatOllamaResponse(parsedData[i]['title'] + "\n\n" + 
+                                                 parsedData[i]['selftext'] + "\n\n",
+                                                n_reps);
+
+    const yta_count = await checkDecisions(result)
+    /*
+    let result_evals = []
+    if (yta_count >= 5 && yta_count <= 15) {
+      for (let j = 0; j < 20; j++) {
+        const reflection = await getOpenAIResponse(parsedData[i]['title'] + "\n\n" + 
+                                                   parsedData[i]['selftext'] + "\n\n" +
+                                                   "You must choose an option between not the asshole (NTA) and you're the asshole (YTA)."+
+                                                   "\n\nBegin your response with DECISION: and the verdict."
+                                                   , 
+                                                   result[j])
+        result_evals.push({model_response: result[j], gpt_evaluation: reflection})
+      }
+      
+    }
+      */
+
+    // store all results, then later take the specific results for which the decisions are imbalanced and run the 2x evaluation
+    all_results.push({postOrder: i, postID: parsedData[i]['id'], yta_count: yta_count,  iterations: result});
+
+    if (i % 5 == 0) {  // store partial results
+      const jsonString = JSON.stringify(all_results)
+      if (i % 10 == 0) {
+        fs.writeFileSync('run20x_post_evaluations_partialA.json', jsonString, 'utf-8')
+      } else {
+        fs.writeFileSync('run20x_post_evaluations_partialB.json', jsonString, 'utf-8')
+      }
+    }
+  }
+
+  const jsonString = JSON.stringify(all_results)
+  fs.writeFileSync('run20x_post_evaluations.json', jsonString, 'utf-8')
+  console.log("Finished run.")
+  return all_results
 }
 
 // TODO: set up a single prompt example and see how they compare
@@ -85,228 +137,82 @@ async function getOllamaReflection(input, og_model_response) {
 }
 
 let STEP_1_PROMPT = `
-in a json format, identify all the "logical thinking chains" in the following prompt + thinking + output by just quoting different parts of the text. 
-Here are some examples of short and long logical chains, structure your response in the same json format. The chains you provide should contain exact quotes from the provided input, even if reformatting the quote would make the argument more clear. 
-[
-  {
-    // 1 - Very short deductive chain
-    "logical-chain": [
-      "All mammals are warm-blooded.",
-      "Whales are mammals.",
-      "Therefore, whales are warm-blooded."
-    ]
-  },
-  {
-    // 2 - Very short causal chain
-    "logical-chain": [
-      "The power went out.",
-      "The router lost power.",
-      "The internet stopped working."
-    ]
-  },
-  {
-    // 3 - Short probabilistic chain
-    "logical-chain": [
-      "Dark clouds are gathering.",
-      "Dark clouds often indicate rain.",
-      "It will probably rain soon."
-    ]
-  },
-  {
-    // 4 - Short mathematical chain
-    "logical-chain": [
-      "x > 5",
-      "Any number greater than 5 is greater than 3.",
-      "Therefore, x > 3."
-    ]
-  },
-  {
-    // 5 - Short practical reasoning
-    "logical-chain": [
-      "I have an exam tomorrow.",
-      "Being well rested improves concentration.",
-      "I should go to bed early."
-    ]
-  },
-  {
-    // 6 - Medium chain
-    "logical-chain": [
-      "The car will not start.",
-      "The headlights are very dim.",
-      "Dim headlights often indicate a weak battery.",
-      "A weak battery may prevent the engine from starting.",
-      "The battery is probably discharged."
-    ]
-  },
-  {
-    // 7 - Medium scientific chain
-    "logical-chain": [
-      "Plants require sunlight for photosynthesis.",
-      "The plant has received almost no sunlight.",
-      "Photosynthesis has been greatly reduced.",
-      "The plant cannot produce enough energy.",
-      "The plant is likely to wilt."
-    ]
-  },
-  {
-    // 8 - Medium business chain
-    "logical-chain": [
-      "Customer satisfaction has decreased.",
-      "Lower satisfaction leads to fewer repeat purchases.",
-      "Repeat purchases contribute significantly to revenue.",
-      "Revenue will likely decline if satisfaction is not improved."
-    ]
-  },
-  {
-    // 9 - Medium software reasoning
-    "logical-chain": [
-      "The server response time has increased.",
-      "Users experience slower page loads.",
-      "Slow pages cause users to abandon sessions.",
-      "Fewer completed sessions reduce conversions."
-    ]
-  },
-  {
-    // 10 - Medium policy reasoning
-    "logical-chain": [
-      "Traffic congestion is increasing.",
-      "Congestion increases travel times.",
-      "Longer travel times reduce productivity.",
-      "Improving public transit may reduce congestion."
-    ]
-  },
-  {
-    // 11 - Long chain
-    "logical-chain": [
-      "The weather forecast predicts heavy snowfall.",
-      "Heavy snowfall often creates icy roads.",
-      "Icy roads increase accident risk.",
-      "Accidents cause road closures and delays.",
-      "Road closures increase commute times.",
-      "Arriving late could cause me to miss an important meeting.",
-      "Leaving earlier reduces the chance of arriving late.",
-      "I should leave home earlier than usual."
-    ]
-  },
-  {
-    // 12 - Long economic chain
-    "logical-chain": [
-      "The central bank raises interest rates.",
-      "Borrowing becomes more expensive.",
-      "Consumers reduce spending.",
-      "Businesses reduce investment.",
-      "Overall demand decreases.",
-      "Inflationary pressure weakens.",
-      "Inflation gradually falls."
-    ]
-  },
-  {
-    // 13 - Long environmental chain
-    "logical-chain": [
-      "More greenhouse gases enter the atmosphere.",
-      "The greenhouse effect becomes stronger.",
-      "Average global temperatures rise.",
-      "Warmer temperatures melt glaciers.",
-      "Melting glaciers contribute to sea level rise.",
-      "Higher sea levels increase coastal flooding.",
-      "Communities near coastlines face greater risk."
-    ]
-  },
-  {
-    // 14 - Long software engineering chain
-    "logical-chain": [
-      "A memory leak exists in the application.",
-      "Memory usage steadily increases.",
-      "Available RAM gradually decreases.",
-      "The operating system begins swapping memory.",
-      "Application performance deteriorates.",
-      "Response times exceed acceptable limits.",
-      "Users experience timeouts.",
-      "Customer satisfaction decreases."
-    ]
-  },
-  {
-    // 15 - Long medical reasoning
-    "logical-chain": [
-      "The patient has a bacterial infection.",
-      "The bacteria continue multiplying.",
-      "The immune system mounts a response.",
-      "Inflammation increases.",
-      "The patient develops a fever.",
-      "The infection spreads without treatment.",
-      "Complications become more likely.",
-      "Antibiotic treatment should begin promptly."
-    ]
-  },
-  {
-    // 16 - Long educational chain
-    "logical-chain": [
-      "The student skips several classes.",
-      "Important concepts are missed.",
-      "Knowledge gaps develop.",
-      "Homework becomes more difficult.",
-      "Exam preparation becomes less effective.",
-      "Exam performance declines.",
-      "Final grades decrease."
-    ]
-  },
-  {
-    // 17 - Long engineering chain
-    "logical-chain": [
-      "The bridge experiences repeated heavy loading.",
-      "Metal fatigue gradually develops.",
-      "Microscopic cracks form.",
-      "The cracks slowly propagate.",
-      "Structural strength decreases.",
-      "The probability of failure increases.",
-      "The bridge requires inspection and repair."
-    ]
-  },
-  {
-    // 18 - Long cybersecurity chain
-    "logical-chain": [
-      "An employee clicks a phishing email.",
-      "Malware is downloaded.",
-      "The malware steals credentials.",
-      "An attacker gains unauthorized access.",
-      "Sensitive files are accessed.",
-      "Customer information is exposed.",
-      "The organization suffers a data breach."
-    ]
-  },
-  {
-    // 19 - Very long reasoning chain
-    "logical-chain": [
-      "The company delays software updates.",
-      "Known vulnerabilities remain unpatched.",
-      "Attackers discover the vulnerabilities.",
-      "An exploit is developed.",
-      "The exploit is successfully deployed.",
-      "Critical systems become compromised.",
-      "Business operations are disrupted.",
-      "Revenue losses accumulate.",
-      "Customer trust declines.",
-      "The company's market reputation suffers."
-    ]
-  },
-  {
-    // 20 - Very long everyday reasoning chain
-    "logical-chain": [
-      "I stayed up very late.",
-      "I slept only four hours.",
-      "I woke up feeling tired.",
-      "My concentration decreased.",
-      "I made mistakes at work.",
-      "Correcting the mistakes took extra time.",
-      "I left work later than planned.",
-      "I missed my evening workout.",
-      "I felt less productive throughout the day."
-    ]
-  }]
+in the above [prompt] + [reasoning] + [final-output], identify all the logical-chains that exist. the definition of a logical-chain is a series of text (that could be scattered across or within each of the [prompt], [reasoning], or [final-output]) where they together create a single logical argument, justification, or reasoning that is helping to generate the [final-output].
+
+different logical-chains can have overlapping parts of text.
+
+use the following JSON structure to identify all of th logical chains:
+
+{
+  "logical-chains": [
+    {
+      "chain": [
+        "<part of text>",
+        "<part of text>",
+        "<part of text>",
+        "<part of text>",
+        "<part of text>",
+        ... // include exact parts of text from [prompt], [reasoning], [final-output] that together construct a single logical-chain
+      ],
+      "summary": <10-20 word summary of this logical-chain"
+    },
+    {
+      "chain": [
+        "<part of text>",
+        "<part of text>",
+        "<part of text>",
+        ... // include exact parts of text from [prompt], [reasoning], [final-output] that together construct a single logical-chain
+      ],
+      "summary": <10-20 word summary of this logical-chain"
+    },
+    ... // include ALL logical-chains that exist in the provided [prompt], [reasoning], [final-output]
+    ... // note that the same <part of text> can be included in multiple logical-chains if they need to be.
+  ]
+}
 `
 let STEP_2_PROMPT = `
-now look at the following list of logical fallacies, each of the logical chains can or can possibly not have these -- if you see evidence of any of the logical fallacies, add a key to the logical chain called "logical-fallacies" and explain which fallacy it was, why under a key "why", and a final "confidence" score between 0 and 1
-these are the list of high level logical fallacies 
+now look at the following list of logical fallacies, each of the logical chains can or can possibly not have these -- if you see evidence of any of the logical fallacies then include which 
+fallacies and why in this structure
+
+use the following JSON structure to identify all of th logical chains:
+
+{
+  "logical-chains": [
+    {
+      "chain": [
+        "<part of text>",
+        "<part of text>",
+        "<part of text>",
+        "<part of text>",
+        "<part of text>",
+        ... // include exact parts of text from [prompt], [reasoning], [final-output] that together construct a single logical-chain
+      ],
+      "summary": <10-20 word summary of this logical-chain"
+      "logic-fallacies": [
+        {
+         "fallacy-type": [understandble name] of the selected fallacy,
+         "reasons-why": a list of between 1 and 5 arguments for how the chain represents the selected logical fallacy
+         "confidence": a confidence score between 0 and 1, for how certain the chain is a representation of the logical fallacy
+        }, 
+        ... // include all fallacies identified in the chain
+      ]
+    },
+    {
+      "chain": [
+        "<part of text>",
+        "<part of text>",
+        "<part of text>",
+        ... // include exact parts of text from [prompt], [reasoning], [final-output] that together construct a single logical-chain
+      ],
+      "summary": <10-20 word summary of this logical-chain",
+      "logic-fallacies": [] // the logical fallacies should be left empty if no fallacies are present in the chain
+    },
+    ... // include ALL logical-chains that exist in the provided [prompt], [reasoning], [final-output]
+    ... // note that the same <part of text> can be included in multiple logical-chains if they need to be.
+  ]
+}
+
+these are the list of high level logical fallacies to look for
 { "logical_fallacies": [
  { "original name": "faulty generalization", 
   "understandable name": "faulty generalization", 
@@ -384,7 +290,7 @@ these are the list of high level logical fallacies
 }
 
 `
-// TODO: remove secret apiKey from the code
+
 async function getOpenAIResponse(input, og_model_response) {
   const openai = new OpenAI({
   apiKey: openaiApiKey,
@@ -392,10 +298,10 @@ async function getOpenAIResponse(input, og_model_response) {
 
 const logic_strings = await openai.responses.create({
   model: "gpt-5.5",
-  input: STEP_1_PROMPT + 
-  "\n\nINPUT: " + input +
-  "\n\nMODEL THINKING: \n" + og_model_response.message.thinking +
-  "\n\nMODEL RESPONSE: \n" + og_model_response.message.content,
+  input: "Prompt: " + input +
+  "\n\nThinking: \n" + og_model_response.message.thinking +
+  "\n\nFinal Output: \n" + og_model_response.message.content +
+  "\n\n" + STEP_1_PROMPT,
   store: true,
 });
 
@@ -407,6 +313,190 @@ const evaluated_logic_strings = await openai.responses.create({
 });
 
 return evaluated_logic_strings.output_text;
+}
+
+function getHigherIndex(item_list, ind_item) {
+  let low = 0
+  let high = item_list.length
+
+  let mid = (low + high) >> 1
+  while (low < high) {
+    mid = (low + high) >> 1
+
+    if (Math.abs(item_list[mid]['yta_count']  - 10) < Math.abs(ind_item['yta_count']  - 10)) {
+      low = mid + 1
+    } else {
+      high = mid
+    }
+  }
+  if (Math.abs(item_list[mid]['yta_count']  - 10) > Math.abs(ind_item['yta_count']  - 10)) {
+    return mid
+  }
+
+  return mid + 1
+}
+
+function getClosestPrompts(aita_eval_list, top_k) {
+  let closest_aita = []
+  closest_aita.push(aita_eval_list.pop())
+  
+  while (aita_eval_list.length > 0) {
+    const aita_prompt = aita_eval_list.pop()
+    const last_aita = closest_aita.pop()
+    if (closest_aita.length < (top_k-1) || Math.abs(aita_prompt['yta_count'] - 10) < Math.abs(last_aita['yta_count'] - 10)) {
+        //console.log(aita_prompt, last_aita)
+        //console.log(Math.abs(aita_prompt - 10), Math.abs(last_aita - 10))
+        //console.log(item_eval_function(aita_prompt), item_eval_function(last_aita))
+      if (closest_aita.length < top_k-1) {
+        closest_aita.push(last_aita)
+      }
+      // splice the newly added element into its sorted position
+      const best_position = getHigherIndex(closest_aita, aita_prompt)
+      //console.log(best_position)
+      closest_aita.splice(best_position, 0, aita_prompt)
+      //console.log("Iteration: ", closest_aita)
+    } else if (Math.abs(aita_prompt['yta_count'] - 10) >= Math.abs(last_aita['yta_count'] - 10)) {
+        closest_aita.push(last_aita)
+    }
+  }
+
+  return closest_aita
+}
+
+async function getMultipleReflection(prompt_record, eval_record, repeat_n=2) {
+  let reflection_list = []
+  const prompt_text = prompt_record['title'] + "\n\n" + 
+                      prompt_record['selftext'] + 
+                      "\n\nYou must choose an option between not the asshole (NTA) and you're the asshole (YTA)." + 
+                      "\n\nBegin your response with DECISION: and the verdict."
+  for (let i = 0; i < repeat_n; i++) {
+    const reflection = await getOpenAIResponse(prompt_text, eval_record)
+    reflection_list.push(reflection)
+  }
+  return reflection_list
+}
+
+// TODO: make a function which iterates over each of the top_k in order, then all 20 decisions and gets 2x GPT responses then saves (again stored based on prompt+argument#)
+//        this should save after each prompt (all 2x responses) so as to not waste compute
+async function iterateLogic(all_input_prompts, all_llm_evals, repeat_n) {
+  let reflection_results = []
+  let top_k_evals = getClosestPrompts(all_llm_evals, 10) //10
+  /*
+  for (const eval_list of top_k_evals) {
+    const prompt_record = all_input_prompts[eval_list['postOrder']]
+    console.log(eval_list['yta_count'])
+    console.log(prompt_record)
+  }
+  return
+  */
+ top_k_evals = top_k_evals.slice(3) //start from fourth element (had 60 when stopped)
+  for (const eval_list of top_k_evals) {
+    const prompt_record = all_input_prompts[eval_list['postOrder']]
+    for (let i=0; i < eval_list['iterations'].length; i++) {//eval_list['iterations'].length
+      console.log("Running Iteration: ", i, prompt_record['postID']) // should have had from the start...
+      const eval_record = eval_list['iterations'][i]
+      const reflections = await getMultipleReflection(prompt_record, eval_record, repeat_n=repeat_n)
+      //console.log(prompt_record, eval_record)
+      //const reflections = [i, i+1]
+      reflection_results.push({postOrder: eval_list['postOrder'], postID: eval_list['postID'], iterationOrder: i, reflections: reflections})
+    }
+    // save results after each prompt is processed
+    const jsonString = JSON.stringify(reflection_results)
+    fs.writeFileSync('run2x_post_reflections_partial.json', jsonString, 'utf-8')
+  }
+  const jsonString = JSON.stringify(reflection_results)
+  fs.writeFileSync('run2x_post_reflections.json', jsonString, 'utf-8')
+
+}
+
+function getReflectionStats(reflection_list) {
+  let return_stats = {
+    numChains: [],
+    numFallacies: [],
+    avgConfidence: []
+  }
+  for (const rawReflection of reflection_list) {
+    let total_confidence = 0
+    let num_chains = 0
+    let num_fallacies = 0
+    let reflection = null
+    try {
+      reflection = JSON.parse(rawReflection)
+    } catch (error) {
+      console.error('Error parsing output:', error)
+    }
+    if (reflection) {
+      console.log(reflection)
+      for (const chain of reflection['logical-chains']) {
+        num_chains++;
+        if (chain['logic-fallacies']) {
+          for (const fallacy of chain['logic-fallacies']) {
+            num_fallacies++;
+            total_confidence += fallacy['confidence'];
+          }
+        }
+      }
+    }
+    return_stats['numChains'].push(num_chains)
+    return_stats['numFallacies'].push(num_fallacies)
+    if (num_fallacies === 0) {
+      num_fallacies++;
+    }
+    return_stats['avgConfidence'].push(total_confidence/num_fallacies)
+  }
+  return return_stats;
+}
+
+function getDecision(iteration) {
+  let regex = /\*{0,2}DECISION\*{0,2}:\*{0,2} [Yy][Tt][Aa]/;
+  let regex2 = /\*{0,2}DECISION\*{0,2}:\*{0,2} [Yy]ou're [Tt]he [Aa]sshole/;
+  if (regex.test(iteration.message.content) || regex2.test(iteration.message.content)) {
+    return "YTA"
+  }
+  return "NTA"
+}
+
+function getEvaluationRecords(all_input_prompts, all_llm_evals, all_logic_chains) {
+  let all_evaluations = []
+  let current_record = {postOrder: -1,
+                        postID: null,
+                        iterationDecisions: [],
+                        iterationChains: [],
+                        iterationFallacies: [],
+                        iterationAvgConfidence: []
+  }
+  let current_id = null
+  for (const logic_chain of all_logic_chains) {
+    if (current_id != logic_chain['postID']) {
+      if (current_id) {
+        all_evaluations.push(current_record)
+      }
+      current_id = logic_chain['postID']
+      const input_post = all_input_prompts[logic_chain['postOrder']]
+      current_record = {postOrder: logic_chain['postOrder'],
+                        postID: current_id,
+                        originalDecision: input_post['link_flair_text'],
+                        numComments: input_post['num_comments'],
+                        numUpvotes: input_post['score'],
+                        iterationDecisions: [],
+                        iterationChains: [],
+                        iterationFallacies: [],
+                        iterationAvgConfidence: []
+      }
+    }
+    const iteration_decision = getDecision(all_llm_evals[logic_chain['postOrder']]['iterations'][logic_chain['iterationOrder']])
+    const reflection_stats = getReflectionStats(logic_chain['reflections'])
+
+    current_record['iterationDecisions'].push(iteration_decision)
+    current_record['iterationChains'].push(reflection_stats['numChains'])
+    current_record['iterationFallacies'].push(reflection_stats['numFallacies'])
+    current_record['iterationAvgConfidence'].push(reflection_stats['avgConfidence'])
+  }
+  if (current_id) {
+    all_evaluations.push(current_record)
+  }
+  const jsonString = JSON.stringify(all_evaluations)
+  fs.writeFileSync('summarized_logic_strings.json', jsonString, 'utf-8')
 }
 
 function processOutputLogicStrings(output) {
@@ -567,6 +657,210 @@ function mapHoverableTextToContent(prompt, thinking, response, logicStrings) {
   }
 }
 
+/*
+LATEX CREATION CODE
+*/
+ 
+const inputPath = process.argv[2] || 'summarized_logic_strings.json';
+const outputPath = process.argv[3] || 'output.tex';
+ 
+function average(arr) {
+  if (!arr || arr.length === 0) return null;
+  const sum = arr.reduce((a, b) => a + b, 0);
+  return sum / arr.length;
+}
+ 
+// Sample standard deviation (n-1 denominator). Returns null if fewer than 2 values.
+function stddev(arr) {
+  if (!arr || arr.length < 2) return null;
+  const mean = average(arr);
+  const sqDiffs = arr.map((v) => (v - mean) ** 2);
+  const variance = sqDiffs.reduce((a, b) => a + b, 0) / (arr.length - 1);
+  return Math.sqrt(variance);
+}
+ 
+function fmt(num, decimals = 2) {
+  if (num === null || num === undefined || Number.isNaN(num)) return '--';
+  return num.toFixed(decimals);
+}
+ 
+// Formats a mean and its standard deviation as "mean $\pm$ std" for a LaTeX cell.
+function fmtMeanStd(mean, sd, decimals = 2) {
+  if (mean === null || mean === undefined || Number.isNaN(mean)) return '--';
+  const meanStr = fmt(mean, decimals);
+  const sdStr = sd === null || sd === undefined || Number.isNaN(sd) ? '--' : fmt(sd, decimals);
+  return `${meanStr} $\\pm$ ${sdStr}`;
+}
+ 
+// Escape LaTeX special characters in free-text fields (e.g. originalDecision)
+function escapeLatex(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/\\/g, '\\textbackslash{}')
+    .replace(/([&%$#_{}])/g, '\\$1')
+    .replace(/~/g, '\\textasciitilde{}')
+    .replace(/\^/g, '\\textasciicircum{}');
+}
+ 
+function summarizePost(post) {
+  const {
+    postID,
+    originalDecision,
+    numComments,
+    numUpvotes,
+    iterationDecisions = [],
+    iterationChains = [],
+    iterationFallacies = [],
+    iterationAvgConfidence = [],
+  } = post;
+ 
+  // Collect the set of distinct decisions found (e.g. YTA, NTA, ESH, NAH, etc.)
+  const decisionSet = Array.from(new Set(iterationDecisions));
+ 
+  const groups = {};
+  for (const decision of decisionSet) {
+    groups[decision] = {
+      count: 0,
+      chains: [],
+      fallacies: [],
+      confidence: [],
+    };
+  }
+ 
+  iterationDecisions.forEach((decision, i) => {
+    const g = groups[decision];
+    g.count += 1;
+ 
+    const chainPair = iterationChains[i] || [];
+    const fallacyPair = iterationFallacies[i] || [];
+    const confPair = iterationAvgConfidence[i] || [];
+ 
+    g.chains.push(...chainPair);
+    g.fallacies.push(...fallacyPair);
+    g.confidence.push(...confPair);
+  });
+ 
+  const decisionSummaries = {};
+  for (const decision of decisionSet) {
+    const g = groups[decision];
+    decisionSummaries[decision] = {
+      iterationCount: g.count,
+      avgConfidence: average(g.confidence),
+      stdConfidence: stddev(g.confidence),
+      avgNumChains: average(g.chains),
+      stdNumChains: stddev(g.chains),
+      avgNumFallacies: average(g.fallacies),
+      stdNumFallacies: stddev(g.fallacies),
+    };
+  }
+ 
+  return {
+    postID,
+    originalDecision,
+    numComments,
+    numUpvotes,
+    totalIterations: iterationDecisions.length,
+    decisionSummaries,
+  };
+}
+ 
+function buildLatexTable(summaries, decisionLabels) {
+  // decisionLabels: ordered list of decision keys to show as column groups (e.g. ["YTA","NTA"])
+  const numGroups = decisionLabels.length;
+ 
+  let out = '';
+  out += '% Auto-generated by summarize.js\n';
+  out += '\\begin{table}[ht]\n';
+  out += '\\centering\n';
+  out += '\\small\n';
+ 
+  // Column spec: postID | orig decision | comments | upvotes | (conf, chains, fallacies, n) per decision group
+  // conf/chains/fallacies cells each display "mean $\pm$ std"
+  const colsPerGroup = 4; // confidence(mean±std), numChains(mean±std), numFallacies(mean±std), iterationCount
+  const colSpec = 'l l r r ' + Array(numGroups).fill('r r r r').join(' ');
+  out += `\\begin{tabular}{${colSpec}}\n`;
+  out += '\\toprule\n';
+ 
+  // Top header row: group labels spanning colsPerGroup columns each
+  let headerTop = ' & & & ';
+  decisionLabels.forEach((label, idx) => {
+    headerTop += `& \\multicolumn{${colsPerGroup}}{c}{${escapeLatex(label)}} `;
+  });
+  headerTop += '\\\\\n';
+  out += headerTop;
+ 
+  // cmidrule under each group
+  let cmid = '';
+  decisionLabels.forEach((_, idx) => {
+    const startCol = 5 + idx * colsPerGroup;
+    const endCol = startCol + colsPerGroup - 1;
+    cmid += `\\cmidrule(lr){${startCol}-${endCol}} `;
+  });
+  out += cmid + '\n';
+ 
+  // Second header row: field names
+  let headerSub = 'Post ID & Orig.\\ Decision & Comments & Upvotes ';
+  decisionLabels.forEach(() => {
+    headerSub += '& Conf.\\ (mean $\\pm$ sd) & Chains (mean $\\pm$ sd) & Fallacies (mean $\\pm$ sd) & $n$ ';
+  });
+  headerSub += '\\\\\n';
+  out += headerSub;
+  out += '\\midrule\n';
+ 
+  for (const s of summaries) {
+    let row = `${escapeLatex(s.postID)} & ${escapeLatex(s.originalDecision)} & ${s.numComments} & ${s.numUpvotes} `;
+    decisionLabels.forEach((label) => {
+      const d = s.decisionSummaries[label];
+      if (d) {
+        row += `& ${fmtMeanStd(d.avgConfidence, d.stdConfidence, 3)} & ${fmtMeanStd(d.avgNumChains, d.stdNumChains, 2)} & ${fmtMeanStd(d.avgNumFallacies, d.stdNumFallacies, 2)} & ${d.iterationCount} `;
+      } else {
+        row += '& -- & -- & -- & 0 ';
+      }
+    });
+    row += '\\\\\n';
+    out += row;
+  }
+ 
+  out += '\\bottomrule\n';
+  out += '\\end{tabular}\n';
+  out += '\\caption{Per-post summary (mean $\\pm$ sample standard deviation) of iteration confidence, chain count, and fallacy count, split by iteration decision.}\n';
+  out += '\\label{tab:post-iteration-summary}\n';
+  out += '\\end{table}\n';
+ 
+  return out;
+}
+ 
+function main() {
+  const raw = fs.readFileSync(inputPath, 'utf8');
+  const posts = JSON.parse(raw);
+ 
+  if (!Array.isArray(posts)) {
+    throw new Error('Input JSON must be an array of post objects.');
+  }
+ 
+  const summaries = posts.map(summarizePost);
+ 
+  // Determine the full set of decision labels across all posts, preferring
+  // a natural YTA/NTA-first ordering when present, then any others alphabetically.
+  const allDecisions = new Set();
+  summaries.forEach((s) => {
+    Object.keys(s.decisionSummaries).forEach((d) => allDecisions.add(d));
+  });
+  const preferredOrder = ['YTA', 'NTA'];
+  const decisionLabels = [
+    ...preferredOrder.filter((d) => allDecisions.has(d)),
+    ...Array.from(allDecisions)
+      .filter((d) => !preferredOrder.includes(d))
+      .sort(),
+  ];
+ 
+  const latex = buildLatexTable(summaries, decisionLabels);
+ 
+  fs.writeFileSync(outputPath, latex, 'utf8');
+  console.log(`Wrote LaTeX table for ${summaries.length} posts to ${outputPath}`);
+}
+ 
+main();
 
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin || 'http://localhost:5173'
@@ -586,8 +880,19 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+
   if (req.url === '/api/message' && req.method === 'POST') {
     let body = ''
+    //runPostList(-1);
+    const rawPosts = fs.readFileSync('./data/filtered_cleaned_posts.json', 'utf-8')
+    const parsedPosts = JSON.parse(rawPosts)
+    const rawEvals = fs.readFileSync('./run20x_post_evaluations_partialA.json', 'utf-8')
+    const parsedEvals = JSON.parse(rawEvals)
+    const rawLogic = fs.readFileSync('./run2x_post_reflections.json', 'utf-8')
+    const parsedLogic = JSON.parse(rawLogic)
+    //iterateLogic(parsedPosts, parsedEvals, 2)
+    getEvaluationRecords(parsedPosts, parsedEvals, parsedLogic)
+    return;
 
     req.on('data', (chunk) => {
       body += chunk
@@ -600,13 +905,26 @@ const server = http.createServer(async (req, res) => {
 
       //const allResponses = await runRepeatOllamaResponse(parsed.text, 10)
       //const ytaDecisions = await checkDecisions(allResponses)
-      const data = await getOllamaResponse(parsed.text)
+      let nta_decision = true
+      let data = null
+      let n_loops = 0
+      let regex = /\*{0,2}DECISION\*{0,2}:\*{0,2} [Yy][Tt][Aa]/;
+      let regex2 = /\*{0,2}DECISION\*{0,2}:\*{0,2} [Yy]ou're [Tt]he [Aa]sshole/;
+      while (nta_decision && n_loops < 20) {
+        data = await getOllamaResponse(parsed.text)
+        if (regex.test(data.message.content) || regex2.test(data.message.content)) {
+          nta_decision = false
+        }
+        n_loops++;
+      }
+      console.log(data.message.content)
 
       //const reflection = await getOllamaReflection(parsed.text, data)
       const reflection = await getOpenAIResponse(parsed.text, data)
 
       // run the ollama secondary response formatter then issue detector this will be returned as a list of all formatted strings
 
+      /*
       const parsedReflection = Array.isArray(reflection)
         ? reflection
         : processOutputLogicStrings(reflection)
@@ -617,8 +935,10 @@ const server = http.createServer(async (req, res) => {
         parsedReflection
       )
       const formattedReflection = formatLogicToHoverableJSON(parsedReflection)
+      */
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
+      /*
       res.end(JSON.stringify({
         prompt: formattedContent.prompt,
         thinking: formattedContent.thinking,
@@ -626,9 +946,10 @@ const server = http.createServer(async (req, res) => {
         reflection: formattedReflection,
         reflectionRaw: reflection,
       }))
-      //res.end(JSON.stringify({ received: "THINKING: " + data.message.thinking + 
-      //  "\n\nRESPONSE: " + data.message.content + 
-      //  "\n\nREFLECTION: " + reflection }))
+        */
+      res.end(JSON.stringify({ prompt: parsed.text, thinking: data.message.thinking, 
+        response: data.message.content, 
+        reflection: reflection }))
       //res.end(JSON.stringify({ received: "All Responses: " + allResponses +
       //  "\n\nYTA Decisions: " + ytaDecisions }))
     })

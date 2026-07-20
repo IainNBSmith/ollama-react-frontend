@@ -103,6 +103,7 @@ const formatResponseJSONList = (responseList, activeHoverId, setActiveHoverId) =
 
 // all three expect formatted text like such [{text: 'some text'}, {text: 'some text', hoverID: 'some hover ID', hoverContent: 'some hover content'}, {text: 'some other text', hoverID: 'some hover ID'}]
 // to be displayed in order
+// TODO: make the color of the highlighting change depending on whether a fallacy was detected or based on the confidence level
 const ProcessedPrompt = ({ prompt, activeHoverId, setActiveHoverId }) => {
   // put prompts into a single central card with processing done.
   return (
@@ -161,7 +162,7 @@ function App() {
     })
 
     const data = await response.json()
-    setStatus({prompt: data.prompt, thinking: data.thinking, response: data.response})
+    setStatus(JSON.stringify({prompt: data.prompt, thinking: data.thinking, response: data.response, reflection: data.reflection}))
     //  <ProcessedPrompt key="prompt" prompt={data.prompt} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />,
     //  <ProcessedThinking key="thinking" thinking={data.thinking} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />,
     //  <ProcessedResponse key="response" response={data.response} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />,
@@ -183,13 +184,16 @@ function App() {
         <button type="submit">Send message</button>
       </form>
 
-      <div>
-        <ProcessedPrompt key="prompt" prompt={status.prompt} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />
-        <ProcessedThinking key="thinking" thinking={status.thinking} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />
-        <ProcessedResponse key="response" response={status.response} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />
-      </div>
+      <div>{status}</div>
     </div>
   )
 }
+
+/*
+<ProcessedPrompt key="prompt" prompt={status.prompt} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />
+        <ProcessedThinking key="thinking" thinking={status.thinking} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />
+        <ProcessedResponse key="response" response={status.response} activeHoverId={activeHoverId} setActiveHoverId={setActiveHoverId} />
+      </div>
+      */
 
 export default App
