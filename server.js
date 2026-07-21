@@ -293,7 +293,7 @@ these are the list of high level logical fallacies to look for
 
 async function getOpenAIResponse(input, og_model_response) {
   const openai = new OpenAI({
-  apiKey: openaiApiKey,
+  apiKey: openaiApiKey
 });
 
 const logic_strings = await openai.responses.create({
@@ -302,6 +302,7 @@ const logic_strings = await openai.responses.create({
   "\n\nThinking: \n" + og_model_response.message.thinking +
   "\n\nFinal Output: \n" + og_model_response.message.content +
   "\n\n" + STEP_1_PROMPT,
+  reasoning: { effort: "low" },
   store: true,
 });
 
@@ -309,6 +310,7 @@ const evaluated_logic_strings = await openai.responses.create({
   model: "gpt-5.5",
   input: STEP_2_PROMPT,
   previous_response_id: logic_strings.id,
+  reasoning: { effort: "low" },
   store: true,
 });
 
@@ -316,6 +318,7 @@ return evaluated_logic_strings.output_text;
 }
 
 function getHigherIndex(item_list, ind_item) {
+  const yta_diff = 10;
   let low = 0
   let high = item_list.length
 
@@ -323,13 +326,13 @@ function getHigherIndex(item_list, ind_item) {
   while (low < high) {
     mid = (low + high) >> 1
 
-    if (Math.abs(item_list[mid]['yta_count']  - 10) < Math.abs(ind_item['yta_count']  - 10)) {
+    if (Math.abs(item_list[mid]['yta_count']  - yta_diff) < Math.abs(ind_item['yta_count']  - yta_diff)) {
       low = mid + 1
     } else {
       high = mid
     }
   }
-  if (Math.abs(item_list[mid]['yta_count']  - 10) > Math.abs(ind_item['yta_count']  - 10)) {
+  if (Math.abs(item_list[mid]['yta_count']  - yta_diff) > Math.abs(ind_item['yta_count']  - yta_diff)) {
     return mid
   }
 
@@ -337,13 +340,14 @@ function getHigherIndex(item_list, ind_item) {
 }
 
 function getClosestPrompts(aita_eval_list, top_k) {
+  const yta_diff = 10;
   let closest_aita = []
   closest_aita.push(aita_eval_list.pop())
   
   while (aita_eval_list.length > 0) {
     const aita_prompt = aita_eval_list.pop()
     const last_aita = closest_aita.pop()
-    if (closest_aita.length < (top_k-1) || Math.abs(aita_prompt['yta_count'] - 10) < Math.abs(last_aita['yta_count'] - 10)) {
+    if (closest_aita.length < (top_k-1) || Math.abs(aita_prompt['yta_count'] - yta_diff) < Math.abs(last_aita['yta_count'] - yta_diff)) {
         //console.log(aita_prompt, last_aita)
         //console.log(Math.abs(aita_prompt - 10), Math.abs(last_aita - 10))
         //console.log(item_eval_function(aita_prompt), item_eval_function(last_aita))
@@ -355,7 +359,7 @@ function getClosestPrompts(aita_eval_list, top_k) {
       //console.log(best_position)
       closest_aita.splice(best_position, 0, aita_prompt)
       //console.log("Iteration: ", closest_aita)
-    } else if (Math.abs(aita_prompt['yta_count'] - 10) >= Math.abs(last_aita['yta_count'] - 10)) {
+    } else if (Math.abs(aita_prompt['yta_count'] - yta_diff) >= Math.abs(last_aita['yta_count'] - yta_diff)) {
         closest_aita.push(last_aita)
     }
   }
@@ -380,16 +384,22 @@ async function getMultipleReflection(prompt_record, eval_record, repeat_n=2) {
 //        this should save after each prompt (all 2x responses) so as to not waste compute
 async function iterateLogic(all_input_prompts, all_llm_evals, repeat_n) {
   let reflection_results = []
-  let top_k_evals = getClosestPrompts(all_llm_evals, 10) //10
-  /*
+  //let top_k_evals = getClosestPrompts(all_llm_evals, 10) //10
+  let top_k_evals = []
+  top_k_evals.push(all_llm_evals[570])
+  top_k_evals.push(all_llm_evals[379])
+  top_k_evals.push(all_llm_evals[500])
+  top_k_evals.push(all_llm_evals[82])
+
   for (const eval_list of top_k_evals) {
     const prompt_record = all_input_prompts[eval_list['postOrder']]
+    console.log(eval_list['postOrder'])
     console.log(eval_list['yta_count'])
     console.log(prompt_record)
   }
   return
-  */
- top_k_evals = top_k_evals.slice(3) //start from fourth element (had 60 when stopped)
+  /**/
+ //top_k_evals = top_k_evals.slice(3) //start from fourth element (had 60 when stopped)
   for (const eval_list of top_k_evals) {
     const prompt_record = all_input_prompts[eval_list['postOrder']]
     for (let i=0; i < eval_list['iterations'].length; i++) {//eval_list['iterations'].length
@@ -402,10 +412,10 @@ async function iterateLogic(all_input_prompts, all_llm_evals, repeat_n) {
     }
     // save results after each prompt is processed
     const jsonString = JSON.stringify(reflection_results)
-    fs.writeFileSync('run2x_post_reflections_partial.json', jsonString, 'utf-8')
+    fs.writeFileSync('run1x_post_controversial_reflections_partial.json', jsonString, 'utf-8')
   }
   const jsonString = JSON.stringify(reflection_results)
-  fs.writeFileSync('run2x_post_reflections.json', jsonString, 'utf-8')
+  fs.writeFileSync('run1x_post_controversial_reflections.json', jsonString, 'utf-8')
 
 }
 
@@ -413,11 +423,13 @@ function getReflectionStats(reflection_list) {
   let return_stats = {
     numChains: [],
     numFallacies: [],
-    avgConfidence: []
+    avgConfidence: [],
+    propFallaciousChains: []
   }
   for (const rawReflection of reflection_list) {
     let total_confidence = 0
     let num_chains = 0
+    let num_fallacious_chains = 0
     let num_fallacies = 0
     let reflection = null
     try {
@@ -430,6 +442,9 @@ function getReflectionStats(reflection_list) {
       for (const chain of reflection['logical-chains']) {
         num_chains++;
         if (chain['logic-fallacies']) {
+          if (chain['logic-fallacies'].length > 0) {
+            num_fallacious_chains++;
+          }
           for (const fallacy of chain['logic-fallacies']) {
             num_fallacies++;
             total_confidence += fallacy['confidence'];
@@ -442,6 +457,10 @@ function getReflectionStats(reflection_list) {
     if (num_fallacies === 0) {
       num_fallacies++;
     }
+    if (num_chains === 0) {
+      num_chains++;
+    }
+    return_stats['propFallaciousChains'].push(num_fallacious_chains/num_chains)
     return_stats['avgConfidence'].push(total_confidence/num_fallacies)
   }
   return return_stats;
@@ -481,7 +500,8 @@ function getEvaluationRecords(all_input_prompts, all_llm_evals, all_logic_chains
                         iterationDecisions: [],
                         iterationChains: [],
                         iterationFallacies: [],
-                        iterationAvgConfidence: []
+                        iterationAvgConfidence: [],
+                        iterationPropFallaciousChains: []
       }
     }
     const iteration_decision = getDecision(all_llm_evals[logic_chain['postOrder']]['iterations'][logic_chain['iterationOrder']])
@@ -491,6 +511,7 @@ function getEvaluationRecords(all_input_prompts, all_llm_evals, all_logic_chains
     current_record['iterationChains'].push(reflection_stats['numChains'])
     current_record['iterationFallacies'].push(reflection_stats['numFallacies'])
     current_record['iterationAvgConfidence'].push(reflection_stats['avgConfidence'])
+    current_record['iterationPropFallaciousChains'].push(reflection_stats['propFallaciousChains'])
   }
   if (current_id) {
     all_evaluations.push(current_record)
@@ -712,6 +733,7 @@ function summarizePost(post) {
     iterationChains = [],
     iterationFallacies = [],
     iterationAvgConfidence = [],
+    iterationPropFallaciousChains = [],
   } = post;
  
   // Collect the set of distinct decisions found (e.g. YTA, NTA, ESH, NAH, etc.)
@@ -724,6 +746,7 @@ function summarizePost(post) {
       chains: [],
       fallacies: [],
       confidence: [],
+      propFallaciousChains: [],
     };
   }
  
@@ -734,10 +757,12 @@ function summarizePost(post) {
     const chainPair = iterationChains[i] || [];
     const fallacyPair = iterationFallacies[i] || [];
     const confPair = iterationAvgConfidence[i] || [];
+    const propFallaciousPair = iterationPropFallaciousChains[i] || [];
  
     g.chains.push(...chainPair);
     g.fallacies.push(...fallacyPair);
     g.confidence.push(...confPair);
+    g.propFallaciousChains.push(...propFallaciousPair);
   });
  
   const decisionSummaries = {};
@@ -751,6 +776,8 @@ function summarizePost(post) {
       stdNumChains: stddev(g.chains),
       avgNumFallacies: average(g.fallacies),
       stdNumFallacies: stddev(g.fallacies),
+      avgPropFallaciousChains: average(g.propFallaciousChains),
+      stdPropFallaciousChains: stddev(g.propFallaciousChains),
     };
   }
  
@@ -770,14 +797,14 @@ function buildLatexTable(summaries, decisionLabels) {
  
   let out = '';
   out += '% Auto-generated by summarize.js\n';
-  out += '\\begin{table}[ht]\n';
+  out += '\\begin{table*}[ht]\n';
   out += '\\centering\n';
-  out += '\\small\n';
+  out += '\\tiny\n';
  
-  // Column spec: postID | orig decision | comments | upvotes | (conf, chains, fallacies, n) per decision group
-  // conf/chains/fallacies cells each display "mean $\pm$ std"
-  const colsPerGroup = 4; // confidence(mean±std), numChains(mean±std), numFallacies(mean±std), iterationCount
-  const colSpec = 'l l r r ' + Array(numGroups).fill('r r r r').join(' ');
+  // Column spec: postID | orig decision | comments | upvotes | (conf, chains, fallacies, propFallaciousChains, n) per decision group
+  // conf/chains/fallacies/propFallaciousChains cells each display "mean $\pm$ std"
+  const colsPerGroup = 5; // confidence, numChains, numFallacies, propFallaciousChains, iterationCount
+  const colSpec = 'l l r r ' + Array(numGroups).fill('r r r r r').join(' ');
   out += `\\begin{tabular}{${colSpec}}\n`;
   out += '\\toprule\n';
  
@@ -801,7 +828,7 @@ function buildLatexTable(summaries, decisionLabels) {
   // Second header row: field names
   let headerSub = 'Post ID & Orig.\\ Decision & Comments & Upvotes ';
   decisionLabels.forEach(() => {
-    headerSub += '& Conf.\\ (mean $\\pm$ sd) & Chains (mean $\\pm$ sd) & Fallacies (mean $\\pm$ sd) & $n$ ';
+    headerSub += '& Conf.\\ & Chains & Fallacies & Prop.\\ Fallacious Chains & $n$ ';
   });
   headerSub += '\\\\\n';
   out += headerSub;
@@ -812,9 +839,9 @@ function buildLatexTable(summaries, decisionLabels) {
     decisionLabels.forEach((label) => {
       const d = s.decisionSummaries[label];
       if (d) {
-        row += `& ${fmtMeanStd(d.avgConfidence, d.stdConfidence, 3)} & ${fmtMeanStd(d.avgNumChains, d.stdNumChains, 2)} & ${fmtMeanStd(d.avgNumFallacies, d.stdNumFallacies, 2)} & ${d.iterationCount} `;
+        row += `& ${fmtMeanStd(d.avgConfidence, d.stdConfidence, 3)} & ${fmtMeanStd(d.avgNumChains, d.stdNumChains, 2)} & ${fmtMeanStd(d.avgNumFallacies, d.stdNumFallacies, 2)} & ${fmtMeanStd(d.avgPropFallaciousChains, d.stdPropFallaciousChains, 3)} & ${d.iterationCount} `;
       } else {
-        row += '& -- & -- & -- & 0 ';
+        row += '& -- & -- & -- & -- & 0 ';
       }
     });
     row += '\\\\\n';
@@ -823,9 +850,9 @@ function buildLatexTable(summaries, decisionLabels) {
  
   out += '\\bottomrule\n';
   out += '\\end{tabular}\n';
-  out += '\\caption{Per-post summary (mean $\\pm$ sample standard deviation) of iteration confidence, chain count, and fallacy count, split by iteration decision.}\n';
+  out += '\\caption{Per-post summary (mean $\\pm$ sample standard deviation) of iteration confidence, chain count, fallacy count, and proportion of fallacious chains, split by iteration decision.}\n';
   out += '\\label{tab:post-iteration-summary}\n';
-  out += '\\end{table}\n';
+  out += '\\end{table*}\n';
  
   return out;
 }
@@ -888,10 +915,10 @@ const server = http.createServer(async (req, res) => {
     const parsedPosts = JSON.parse(rawPosts)
     const rawEvals = fs.readFileSync('./run20x_post_evaluations_partialA.json', 'utf-8')
     const parsedEvals = JSON.parse(rawEvals)
-    const rawLogic = fs.readFileSync('./run2x_post_reflections.json', 'utf-8')
-    const parsedLogic = JSON.parse(rawLogic)
-    //iterateLogic(parsedPosts, parsedEvals, 2)
-    getEvaluationRecords(parsedPosts, parsedEvals, parsedLogic)
+    //const rawLogic = fs.readFileSync('./run2x_post_reflections.json', 'utf-8')
+    //const parsedLogic = JSON.parse(rawLogic)
+    iterateLogic(parsedPosts, parsedEvals, 1)
+    //getEvaluationRecords(parsedPosts, parsedEvals, parsedLogic)
     return;
 
     req.on('data', (chunk) => {
